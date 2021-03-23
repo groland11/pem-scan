@@ -1,2 +1,2 @@
 # pem-scan
-Check single file or directory for X509 PEM certificates and output certificate details
+Check single file or directory for one or more X509 PEM certificates and show certificate details

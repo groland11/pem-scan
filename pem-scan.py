@@ -27,7 +27,7 @@ def parseargs():
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="increase output verbosity")
     parser.add_argument("filename", type=str,
-                        help="file containing onw or more x509 certificates in PEM format")
+                        help="file or directory containing onw or more x509 certificates in PEM format")
     parser.add_argument("-V", "--version", action="version", version="1.0.0")
     return parser.parse_args()
 
