@@ -9,7 +9,7 @@ import sys
 
 from cryptography import x509
 from cryptography.hazmat.backends import default_backend
-from cryptography.hazmat.primitives.serialization import load_pem_public_key
+# from cryptography.hazmat.primitives.serialization import load_pem_public_key
 
 
 class LogFilter(logging.Filter):
@@ -62,8 +62,7 @@ class CertStore:
     # Types of checks that can be performed on certificates
     CHECK_EXPIRES = 0
 
-
-    def __init__(self, verbose: bool=False, debug: bool=False):
+    def __init__(self, verbose: bool = False, debug: bool = False):
         self._verbose = verbose
         self._debug = debug
         self._logger = logging.getLogger(__name__)
@@ -71,8 +70,7 @@ class CertStore:
         self._current_cert: x509.Certificate = None
         self._check_list = {}
 
-
-    def check_expires(self, expires: int=0) -> bool:
+    def check_expires(self, expires: int = 0) -> bool:
         """
         Check if current certificate expires in <expires> days
         Errors will be written to stdout
@@ -85,15 +83,13 @@ class CertStore:
 
         return True
 
-
-    def enable_check(self, check_type:int, check_param: object) -> None:
+    def enable_check(self, check_type: int, check_param: object) -> None:
         """
         Enabble individual checks on certificate data
         Checks to be performed are all stored in a dictionary
         """
         if check_type == CertStore.CHECK_EXPIRES:
             self._check_list[self.check_expires] = check_param
-
 
     def run_checks(self) -> bool:
         """
@@ -113,7 +109,6 @@ class CertStore:
 
         return ret
 
-
     def store_cert(self, cert: x509.Certificate) -> None:
         """
         Store certificate in dictionary for later use
@@ -122,22 +117,21 @@ class CertStore:
         try:
             self._current_cert = cert
             ext_ski = cert.extensions.get_extension_for_oid(x509.OID_SUBJECT_KEY_IDENTIFIER)
-        except x509.extensions.ExtensionNotFound as e:
+        except x509.extensions.ExtensionNotFound:
             key = cert.subject.rfc4514_string()
         else:
             key = ext_ski.value.digest.hex()
 
-        if self._cert_list.get(key) == None:
+        if self._cert_list.get(key) is None:
             self._cert_list[key] = cert
         else:
             raise ValueError(f"Duplicate certificate for \"{self.scan_subject(cert.subject.rfc4514_string()).get('CN')}\"")
 
-
-    def scan_subject(self, subject:str) -> dict:
+    def scan_subject(self, subject: str) -> dict:
         """Convert path components of subject line to dictionary (OU, O, C, CN, ST, L)"""
         sdict = {}
 
-        subject = subject.replace("\,", "") # Colons in values should be escaped and will be ignored
+        subject = subject.replace("\\,", "")  # Colons in values should be escaped and will be ignored
         for part in subject.split(","):
             try:
                 (key, value) = part.split('=', maxsplit=1)
@@ -149,8 +143,7 @@ class CertStore:
 
         return sdict
 
-
-    def scan_pem(self, pem: str, linenr: int=0) -> x509.Certificate:
+    def scan_pem(self, pem: str, linenr: int = 0) -> x509.Certificate:
         """
         Convert text lines in PEM format into a X509 certificate object
 
@@ -227,7 +220,6 @@ class CertStore:
 
         return certificate
 
-
     def scan(self) -> None:
         pass
 
@@ -238,8 +230,7 @@ class FileCertStore(CertStore):
         super().__init__(verbose=verbose, debug=debug)
         self.__filename = filename
 
-
-    def scan(self) -> None:
+    def scan(self) -> bool:
         """Scan current file for one or more PEM encoded certificates"""
         pem = ""
         is_pem = False
@@ -253,7 +244,7 @@ class FileCertStore(CertStore):
                 for line in pem_file.readlines():
                     linenr += 1
 
-                    # Begin of certificate                                                                                                                                                                                                                                                              klllllllllllllööööööööööööööööööööööööööööööööööööööööööööööööööööööööööööööööööögvböpüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüüzu77777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777mkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkklkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkö
+                    # Begin of certificate
                     if re.match(r"^-----BEGIN CERTIFICATE-----$", line.strip()):
                         pem += line
                         beginnr = linenr
@@ -300,13 +291,13 @@ def main():
     """Main program flow"""
     cert_store_list = []
     args = parseargs()
-    logger = get_logger(args.debug)
+    # logger = get_logger(args.debug)
     ret = True
 
     # Scan a single file
     if os.path.isfile(args.filename):
         file_store = FileCertStore(args.filename, verbose=args.verbose, debug=args.debug)
-        if args.expires:
+        if args.expires is not None:
             file_store.enable_check(check_type=FileCertStore.CHECK_EXPIRES, check_param=args.expires)
         ret = file_store.scan()
         cert_store_list.append(file_store)
@@ -317,7 +308,7 @@ def main():
             for name in files:
                 if re.match(r".*\.(pem|cert|crt|key)$", name, flags=re.IGNORECASE):
                     file_store = FileCertStore(os.path.join(root, name), verbose=args.verbose, debug=args.debug)
-                    if args.expires:
+                    if args.expires is not None:
                         file_store.enable_check(check_type=FileCertStore.CHECK_EXPIRES, check_param=args.expires)
                     if not file_store.scan():
                         ret = False
