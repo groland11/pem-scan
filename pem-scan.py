@@ -169,7 +169,7 @@ class CertStore:
         # Print Common Name (CN)
         subject = certificate.subject.rfc4514_string()
         sdict = self.scan_subject(subject)
-        print(f'--{linenr}-- CN: {sdict.get("CN")}')
+        print(f'{linenr:>5} CN: {sdict.get("CN")}')
         self._logger.debug(subject)
 
         if self._verbose:
