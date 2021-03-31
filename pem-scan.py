@@ -77,7 +77,7 @@ class CertStore:
         """
         diff_delta = self._current_cert.not_valid_after - datetime.now()
         if diff_delta < timedelta(days=expires):
-            self._logger.error(f"Certificate expires in {diff_delta.days} days \
+            self._logger.error(f"FAIL: Certificate expires in {diff_delta.days} days \
 ({self._current_cert.not_valid_after.strftime('%Y-%m-%d')})")
             return False
 
@@ -162,7 +162,7 @@ class CertStore:
         # Print Common Name (CN)
         subject = certificate.subject.rfc4514_string()
         sdict = self.scan_subject(subject)
-        print(f'{linenr:>5} CN: {sdict.get("CN")}')
+        print(f'{linenr:>5}: {sdict.get("CN")}')
         self._logger.debug(subject)
 
         if self._verbose:
