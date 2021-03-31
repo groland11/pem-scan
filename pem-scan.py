@@ -137,8 +137,14 @@ class CertStore:
         """Convert path components of subject line to dictionary (OU, O, C, CN, ST, L)"""
         sdict = {}
 
+        subject = subject.replace("\,", "") # Colons in values should be escaped and will be ignored
         for part in subject.split(","):
-            (key, value) = part.split('=', maxsplit=1)
+            try:
+                (key, value) = part.split('=', maxsplit=1)
+            except ValueError:
+                # If there is still a colon in the value part, there will be no '=' sign
+                # Therefore ignore everything after the colon
+                continue
             sdict[key] = value
 
         return sdict
@@ -196,28 +202,28 @@ class CertStore:
                 if len(output) > 0:
                     print(f"  SubjectAlternativeName: {output}")
             except x509.extensions.ExtensionNotFound as e:
-                self._logger.debug(f"{e}")
+                self._logger.debug(f"SAN: {e}")
 
             # Extension: SubjectKeyIdentifier
             try:
                 ext_ski = certificate.extensions.get_extension_for_oid(x509.OID_SUBJECT_KEY_IDENTIFIER)
                 print(f"  SubjectKeyIdentifier: {ext_ski.value.digest.hex()}")
             except x509.extensions.ExtensionNotFound as e:
-                self._logger.debug(f"{e}")
+                self._logger.debug(f"SubjectKeyIdentifier: {e}")
 
             # Extension: AuthorityKeyIdentifier
             try:
                 ext_aki = certificate.extensions.get_extension_for_oid(x509.OID_AUTHORITY_KEY_IDENTIFIER)
                 print(f"  AuthorityKeyIdentifier: {ext_aki.value.key_identifier.hex()}")
             except x509.extensions.ExtensionNotFound as e:
-                self._logger.debug(f"{e}")
+                self._logger.debug(f"AuthorityKeyIdentifier: {e}")
 
             # Extension: BasicConstraints
             try:
                 ext_bc = certificate.extensions.get_extension_for_oid(x509.OID_BASIC_CONSTRAINTS)
                 print(f"  BasicConstraints: CA={ext_bc.value.ca},Critical={ext_bc.critical}")
             except x509.extensions.ExtensionNotFound as e:
-                self._logger.debug(f"{e}")
+                self._logger.debug(f"BasicConstraints: {e}")
 
         return certificate
 
@@ -282,7 +288,7 @@ class FileCertStore(CertStore):
 
                         continue
 
-        except (FileNotFoundError, UnicodeDecodeError) as e:
+        except (FileNotFoundError, UnicodeDecodeError, PermissionError) as e:
             # Broken symbolic link, not a text file
             self._logger.error(f"{e}")
             ret = False
