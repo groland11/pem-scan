@@ -22,6 +22,8 @@ def parseargs():
     parser = argparse.ArgumentParser(description="Script description")
     parser.add_argument("-e", "--expires", type=int,
                         help="check if certificate expires in n days or less")
+    parser.add_argument("-q", "--quiet", action="store_true",
+                        help="only display error messages")
     parser.add_argument("-d", "--debug", action="store_true",
                         help="generate additional debug information")
     parser.add_argument("-v", "--verbose", action="store_true",
@@ -62,7 +64,8 @@ class CertStore:
     # Types of checks that can be performed on certificates
     CHECK_EXPIRES = 0
 
-    def __init__(self, verbose: bool = False, debug: bool = False):
+    def __init__(self, quiet: bool = False, verbose: bool = False, debug: bool = False):
+        self._quiet = quiet
         self._verbose = verbose
         self._debug = debug
         self._logger = logging.getLogger(__name__)
@@ -162,7 +165,8 @@ class CertStore:
         # Print Common Name (CN)
         subject = certificate.subject.rfc4514_string()
         sdict = self.scan_subject(subject)
-        print(f'{linenr:>5}: {sdict.get("CN")}')
+        if not self._quiet:
+            print(f'{linenr:>5}: {sdict.get("CN")}')
         self._logger.debug(subject)
 
         if self._verbose:
@@ -226,8 +230,8 @@ class CertStore:
 
 class FileCertStore(CertStore):
     """One or more certificates are stored in a single file"""
-    def __init__(self, filename: str, verbose: bool = False, debug: bool = False):
-        super().__init__(verbose=verbose, debug=debug)
+    def __init__(self, filename: str, quiet: bool = False, verbose: bool = False, debug: bool = False):
+        super().__init__(quiet=quiet, verbose=verbose, debug=debug)
         self.__filename = filename
 
     def scan(self) -> bool:
@@ -296,7 +300,7 @@ def main():
 
     # Scan a single file
     if os.path.isfile(args.filename):
-        file_store = FileCertStore(args.filename, verbose=args.verbose, debug=args.debug)
+        file_store = FileCertStore(args.filename, quiet=args.quiet, verbose=args.verbose, debug=args.debug)
         if args.expires is not None:
             file_store.enable_check(check_type=FileCertStore.CHECK_EXPIRES, check_param=args.expires)
         ret = file_store.scan()
@@ -307,7 +311,7 @@ def main():
         for root, dir, files in os.walk(args.filename):
             for name in files:
                 if re.match(r".*\.(pem|cert|crt|key)$", name, flags=re.IGNORECASE):
-                    file_store = FileCertStore(os.path.join(root, name), verbose=args.verbose, debug=args.debug)
+                    file_store = FileCertStore(os.path.join(root, name), quiet=args.quiet, verbose=args.verbose, debug=args.debug)
                     if args.expires is not None:
                         file_store.enable_check(check_type=FileCertStore.CHECK_EXPIRES, check_param=args.expires)
                     if not file_store.scan():

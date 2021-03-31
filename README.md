@@ -1,5 +1,5 @@
 # pem-scan
-Check single file or directory for one or more X509 PEM certificates and show certificate details
+Check single file or directory for one or more X509 PEM certificates and show certificate details.
 
 ## Usage
 ```
@@ -15,6 +15,7 @@ optional arguments:
   -h, --help            show this help message and exit
   -e EXPIRES, --expires EXPIRES
                         check if certificate expires in n days or less
+  -q, --quiet           only display error messages
   -d, --debug           generate additional debug information
   -v, --verbose         increase output verbosity
   -V, --version         show program's version number and exit
@@ -78,4 +79,15 @@ Failed checks for DST Root CA X3 (/etc/ssl/certs/ca-certificates.crt)
  1076: Entrust Root Certification Authority - EC1
  1094: Entrust Root Certification Authority - G2
 ...
+```
+
+2. Same check, this time only display check errors by using the -q option.
+```
+$ pem-scan.py -e 365 -q /etc/ssl/certs/ca-certificates.crt
+/etc/ssl/certs/ca-certificates.crt
+FAIL: Certificate expires in 258 days (2021-12-15)
+Failed checks for Cybertrust Global Root (/etc/ssl/certs/ca-certificates.crt)
+FAIL: Certificate expires in 182 days (2021-09-30)
+Failed checks for DST Root CA X3 (/etc/ssl/certs/ca-certificates.crt)
+FAIL: Certificate expires in 258 days (2021-12-15)
 ```
