@@ -128,13 +128,14 @@ class CertStore:
         if self._cert_list.get(key) is None:
             self._cert_list[key] = cert
         else:
-            raise ValueError(f"Duplicate certificate for \"{self.scan_subject(cert.subject.rfc4514_string()).get('CN')}\"")
+            raise ValueError(
+                f'Duplicate certificate for {self.scan_subject(cert.subject.rfc4514_string()).get("CN")}')
 
     def scan_subject(self, subject: str) -> dict:
         """Convert path components of subject line to dictionary (OU, O, C, CN, ST, L)"""
         sdict = {}
 
-        subject = subject.replace("\\,", "")  # Colons in values should be escaped and will be ignored
+        subject = subject.replace('\\,', "")  # Colons in values should be escaped and will be ignored
         for part in subject.split(","):
             try:
                 (key, value) = part.split('=', maxsplit=1)
@@ -150,8 +151,9 @@ class CertStore:
         """
         Convert text lines in PEM format into a X509 certificate object
 
-        Following information will be written to stdout:
+        Following information will be written to stdout (if not quiet):
         - Subject
+        Following information will be written additionally to stdout (if verbose):
         - Issuer
         - Valid from
         - Valid until
@@ -160,70 +162,78 @@ class CertStore:
         - AuthorityKeyIdentifier
         - BasicConstraints
         """
+        san_output = None
+        ext_ski = None
+        ext_aki = None
+        ext_bc = None
+
         certificate = x509.load_pem_x509_certificate(pem.encode(), default_backend())
 
-        # Print Common Name (CN)
+        # Common Name (CN)
         subject = certificate.subject.rfc4514_string()
+        self._logger.debug(subject)
         sdict = self.scan_subject(subject)
         # Some certificates do not have a CN set in subject. Use OU instead.
         cert_name = sdict.get("CN") if sdict.get("CN") is not None else sdict.get("OU")
 
+        # Rest of subject line without CN
+        subject_rest = ""
+        for key in ('O', 'OU', 'C'):
+            subject_rest += f"{key}={sdict[key]}," if sdict.get(key) else ""
+
+        # Certificate issuer
+        issuer = certificate.issuer.rfc4514_string()
+        issuer_dict = self.scan_subject(issuer)
+
+        issuer_rest = ""
+        for key in ('O', 'OU', 'C'):
+            issuer_rest += f"{key}={sdict[key]}," if sdict.get(key) else ""
+
+        # Extension: SubjectAlternativeName
+        try:
+            ext_san = certificate.extensions.get_extension_for_oid(x509.OID_SUBJECT_ALTERNATIVE_NAME)
+            san_output = ','.join(ext_san.value.get_values_for_type(x509.DNSName))
+        except x509.extensions.ExtensionNotFound as e:
+            self._logger.debug(f"SAN: {e}")
+
+        # Extension: SubjectKeyIdentifier
+        try:
+            ext_ski = certificate.extensions.get_extension_for_oid(x509.OID_SUBJECT_KEY_IDENTIFIER)
+        except x509.extensions.ExtensionNotFound as e:
+            self._logger.debug(f"SubjectKeyIdentifier: {e}")
+
+        # Extension: AuthorityKeyIdentifier
+        try:
+            ext_aki = certificate.extensions.get_extension_for_oid(x509.OID_AUTHORITY_KEY_IDENTIFIER)
+        except x509.extensions.ExtensionNotFound as e:
+            self._logger.debug(f"AuthorityKeyIdentifier: {e}")
+
+        # Extension: BasicConstraints
+        try:
+            ext_bc = certificate.extensions.get_extension_for_oid(x509.OID_BASIC_CONSTRAINTS)
+        except x509.extensions.ExtensionNotFound as e:
+            self._logger.debug(f"BasicConstraints: {e}")
+
+        # Output
         if not self._quiet:
             print(f'{linenr:>5}: {cert_name}')
-        self._logger.debug(subject)
 
-        if self._verbose:
-            # Print rest of subject line without CN
-            subject_rest = ""
-            for key in ('O', 'OU', 'C'):
-                subject_rest += f"{key}={sdict[key]}," if sdict.get(key) else ""
-            if len(subject_rest) > 0:
-                print(f"  Subject: {subject_rest[:-1]}")
-
-            # Certificate issuer
-            issuer = certificate.issuer.rfc4514_string()
-            issuer_dict = self.scan_subject(issuer)
-            print(f'  Issuer CN: {issuer_dict.get("CN")}')
-
-            issuer_rest = ""
-            for key in ('O', 'OU', 'C'):
-                issuer_rest += f"{key}={sdict[key]}," if sdict.get(key) else ""
-            if len(issuer_rest) > 0:
-                print(f"  Issuer: {subject_rest[:-1]}")
-
-            # Valid from / until
-            print(f"  Not before: {certificate.not_valid_before}")
-            print(f"  Not after: {certificate.not_valid_after}")
-
-            # Extension: SubjectAlternativeName
-            try:
-                ext_san = certificate.extensions.get_extension_for_oid(x509.OID_SUBJECT_ALTERNATIVE_NAME)
-                output = ','.join(ext_san.value.get_values_for_type(x509.DNSName))
-                if len(output) > 0:
-                    print(f"  SubjectAlternativeName: {output}")
-            except x509.extensions.ExtensionNotFound as e:
-                self._logger.debug(f"SAN: {e}")
-
-            # Extension: SubjectKeyIdentifier
-            try:
-                ext_ski = certificate.extensions.get_extension_for_oid(x509.OID_SUBJECT_KEY_IDENTIFIER)
-                print(f"  SubjectKeyIdentifier: {ext_ski.value.digest.hex()}")
-            except x509.extensions.ExtensionNotFound as e:
-                self._logger.debug(f"SubjectKeyIdentifier: {e}")
-
-            # Extension: AuthorityKeyIdentifier
-            try:
-                ext_aki = certificate.extensions.get_extension_for_oid(x509.OID_AUTHORITY_KEY_IDENTIFIER)
-                print(f"  AuthorityKeyIdentifier: {ext_aki.value.key_identifier.hex()}")
-            except x509.extensions.ExtensionNotFound as e:
-                self._logger.debug(f"AuthorityKeyIdentifier: {e}")
-
-            # Extension: BasicConstraints
-            try:
-                ext_bc = certificate.extensions.get_extension_for_oid(x509.OID_BASIC_CONSTRAINTS)
-                print(f"  BasicConstraints: CA={ext_bc.value.ca},Critical={ext_bc.critical}")
-            except x509.extensions.ExtensionNotFound as e:
-                self._logger.debug(f"BasicConstraints: {e}")
+            if self._verbose:
+                if subject_rest and len(subject_rest) > 0:
+                    print(f"       Subject: {subject_rest[:-1]}")
+                print(f'       Issuer CN: {issuer_dict.get("CN")}')
+                if issuer_rest and len(issuer_rest) > 0:
+                    print(f"       Issuer: {subject_rest[:-1]}")
+                print(f"       Not before: {certificate.not_valid_before}")
+                print(f"       Not after: {certificate.not_valid_after}")
+                if san_output and len(san_output) > 0:
+                    print(f"       SubjectAlternativeName: {san_output}")
+                if ext_ski:
+                    print(f"       SubjectKeyIdentifier: {ext_ski.value.digest.hex()}")
+                if ext_aki:
+                    print(f"       AuthorityKeyIdentifier: {ext_aki.value.key_identifier.hex()}")
+                if ext_bc:
+                    print(f"       BasicConstraints: CA={ext_bc.value.ca},Critical={ext_bc.critical}")
 
         return certificate, cert_name
 
