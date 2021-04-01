@@ -165,8 +165,11 @@ class CertStore:
         # Print Common Name (CN)
         subject = certificate.subject.rfc4514_string()
         sdict = self.scan_subject(subject)
+        # Some certificates do not have a CN set in subject. Use OU instead.
+        sname = sdict.get("CN") if sdict.get("CN") is not None else sdict.get("OU")
+
         if not self._quiet:
-            print(f'{linenr:>5}: {sdict.get("CN")}')
+            print(f'{linenr:>5}: {sname}')
         self._logger.debug(subject)
 
         if self._verbose:

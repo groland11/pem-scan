@@ -23,7 +23,7 @@ optional arguments:
 
 ## Examples
 1. Scan the file ca-certificates.crt, which contains a long list of trusted CA certificates.
-- In the output, the first column is the line number, followed by the Organisational Unit (OU) of the certificate subject.
+- In the output, the first column is the line number, followed by the Common Name (CN) or - if not present - Organisational Unit (OU) of the certificate subject.
 - We also check if there are any CA certificates that will expire within the next year.
 - You can not only see very clearly which certificates will expire, but also the line number where the certificate is stored in the file.
 ```
@@ -31,7 +31,7 @@ $ pem-scan.py -e 365 /etc/ssl/certs/ca-certificates.crt
 
 /etc/ssl/certs/ca-certificates.crt
     1: ACCVRAIZ1
-   45: None
+   45: AC RAIZ FNMT-RCM
    77: Actalis Authentication Root CA
   110: AffirmTrust Commercial
   130: AffirmTrust Networking
