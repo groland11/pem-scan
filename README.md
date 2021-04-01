@@ -57,13 +57,13 @@ $ pem-scan.py -e 365 /etc/ssl/certs/ca-certificates.crt
   625: Chambers of Commerce Root - 2008
   667: AAA Certificate Services
   692: Cybertrust Global Root
-FAIL: Certificate expires in 258 days (2021-12-15)
-Failed checks for Cybertrust Global Root (/etc/ssl/certs/ca-certificates.crt)
+ERROR: FAIL: Certificate expires in 258 days (2021-12-15)
+ERROR: Failed checks for Cybertrust Global Root (/etc/ssl/certs/ca-certificates.crt)
   714: D-TRUST Root Class 3 CA 2 2009
   739: D-TRUST Root Class 3 CA 2 EV 2009
   764: DST Root CA X3
-FAIL: Certificate expires in 182 days (2021-09-30)
-Failed checks for DST Root CA X3 (/etc/ssl/certs/ca-certificates.crt)
+ERROR: FAIL: Certificate expires in 182 days (2021-09-30)
+ERROR: Failed checks for DST Root CA X3 (/etc/ssl/certs/ca-certificates.crt)
   784: DigiCert Assured ID Root CA
   806: DigiCert Assured ID Root G2
   828: DigiCert Assured ID Root G3
@@ -85,9 +85,8 @@ Failed checks for DST Root CA X3 (/etc/ssl/certs/ca-certificates.crt)
 ```
 $ pem-scan.py -e 365 -q /etc/ssl/certs/ca-certificates.crt
 /etc/ssl/certs/ca-certificates.crt
-FAIL: Certificate expires in 258 days (2021-12-15)
-Failed checks for Cybertrust Global Root (/etc/ssl/certs/ca-certificates.crt)
-FAIL: Certificate expires in 182 days (2021-09-30)
-Failed checks for DST Root CA X3 (/etc/ssl/certs/ca-certificates.crt)
-FAIL: Certificate expires in 258 days (2021-12-15)
+ERROR: FAIL: Certificate expires in 258 days (2021-12-15)
+ERROR: Failed checks for Cybertrust Global Root (/etc/ssl/certs/ca-certificates.crt)
+ERROR: FAIL: Certificate expires in 182 days (2021-09-30)
+ERROR: Failed checks for DST Root CA X3 (/etc/ssl/certs/ca-certificates.crt)
 ```

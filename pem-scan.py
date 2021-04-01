@@ -297,7 +297,7 @@ def main():
     """Main program flow"""
     cert_store_list = []
     args = parseargs()
-    # logger = get_logger(args.debug)
+    get_logger(args.debug)
     ret = True
 
     # Scan a single file
