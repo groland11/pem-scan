@@ -146,7 +146,7 @@ class CertStore:
 
         return sdict
 
-    def scan_pem(self, pem: str, linenr: int = 0) -> x509.Certificate:
+    def scan_pem(self, pem: str, linenr: int = 0) -> (x509.Certificate, str):
         """
         Convert text lines in PEM format into a X509 certificate object
 
@@ -166,10 +166,10 @@ class CertStore:
         subject = certificate.subject.rfc4514_string()
         sdict = self.scan_subject(subject)
         # Some certificates do not have a CN set in subject. Use OU instead.
-        sname = sdict.get("CN") if sdict.get("CN") is not None else sdict.get("OU")
+        cert_name = sdict.get("CN") if sdict.get("CN") is not None else sdict.get("OU")
 
         if not self._quiet:
-            print(f'{linenr:>5}: {sname}')
+            print(f'{linenr:>5}: {cert_name}')
         self._logger.debug(subject)
 
         if self._verbose:
@@ -225,7 +225,7 @@ class CertStore:
             except x509.extensions.ExtensionNotFound as e:
                 self._logger.debug(f"BasicConstraints: {e}")
 
-        return certificate
+        return certificate, cert_name
 
     def scan(self) -> None:
         pass
@@ -266,7 +266,7 @@ class FileCertStore(CertStore):
                             # End of certificate
                             is_pem = False
                             try:
-                                certificate = self.scan_pem(pem, linenr=beginnr)
+                                certificate, cert_name = self.scan_pem(pem, linenr=beginnr)
                                 if certificate:
                                     # We found a valid certificate
                                     self.store_cert(certificate)
@@ -274,8 +274,7 @@ class FileCertStore(CertStore):
                                     if not ret:
                                         if not ret:
                                             self._logger.error(
-                                                f"Failed checks for \
-{self.scan_subject(certificate.subject.rfc4514_string()).get('CN')} ({self.__filename})")
+                                                f"Failed checks for {cert_name} ({self.__filename})")
                             except ValueError as e:
                                 self._logger.warning(f"{self.__filename}: {e}")
                             except Exception as e:
