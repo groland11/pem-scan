@@ -9,7 +9,7 @@ Check single file or directory for one or more X509 PEM certificates and show ce
 
 ## Usage
 ```
-/pem-scan.py -h
+./pem-scan.py -h
 usage: pem-scan.py [-h] [-e EXPIRES] [-d] [-v] [-V] filename
 
 Script description
