@@ -1,10 +1,11 @@
-# pem-scan
-Check single file or directory for one or more X509 PEM certificates and show certificate details.
 
 ![last commit](https://img.shields.io/github/last-commit/groland11/pem-scan.svg)
 ![release date](https://img.shields.io/github/release-date/groland11/pem-scan.svg)
 ![languages](https://img.shields.io/github/languages/top/groland11/pem-scan.svg)
 ![license](https://img.shields.io/github/license/groland11/pem-scan.svg)
+
+# pem-scan
+Check single file or directory for one or more X509 PEM certificates and show certificate details.
 
 
 ## Usage
