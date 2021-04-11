@@ -22,6 +22,12 @@ def parseargs():
     parser = argparse.ArgumentParser(description="Script description")
     parser.add_argument("-e", "--expires", type=int,
                         help="check if certificate expires in n days or less")
+    parser.add_argument("--regex", type=str,
+                        help="filter CN in subject by regex expression (only for directories)")
+    parser.add_argument("--ski", type=str,
+                        help="filter by subject key identifier (only for directories)")
+    parser.add_argument("--aki", type=str,
+                        help="filter by authority key identifier (only for directories)")
     parser.add_argument("-q", "--quiet", action="store_true",
                         help="only display error messages")
     parser.add_argument("-d", "--debug", action="store_true",
@@ -72,6 +78,24 @@ class CertStore:
         self._cert_list = {}
         self._current_cert: x509.Certificate = None
         self._check_list = {}
+        self.filter_cn = None
+        self.filter_ski = None
+        self.filter_aki = None
+
+    def set_filter(self, cn: str = None, ski: str = None, aki: str = None) -> None:
+        """Set filter for certificates by subject or attributes"""
+        self.filter_cn = cn
+        self.filter_ski = ski
+        self.filter_aki = aki
+
+    def has_filter(self) -> bool:
+        """Returns True if any filter has been set"""
+        if self.filter_cn is not None or \
+                self.filter_ski is not None or \
+                self.filter_aki is not None:
+            return True
+        else:
+            return False
 
     def check_expires(self, expires: int = 0) -> bool:
         """
@@ -216,24 +240,40 @@ class CertStore:
 
         # Output
         if not self._quiet:
-            print(f'{linenr:>5}: {cert_name}')
+            skip = False
+            if self.filter_cn is not None:
+                skip = True
+                match = re.search(self.filter_cn, cert_name)
+                if match:
+                    skip = False
+            if self.filter_ski:
+                skip = True
+                if ext_ski and self.filter_ski == ext_ski.value.digest.hex():
+                    skip = False
+            if self.filter_aki is not None:
+                skip = True
+                if ext_aki and self.filter_aki == ext_aki.value.key_identifier.hex():
+                    skip = False
 
-            if self._verbose:
-                if subject_rest and len(subject_rest) > 0:
-                    print(f"       Subject: {subject_rest[:-1]}")
-                print(f'       Issuer CN: {issuer_dict.get("CN")}')
-                if issuer_rest and len(issuer_rest) > 0:
-                    print(f"       Issuer: {subject_rest[:-1]}")
-                print(f"       Not before: {certificate.not_valid_before}")
-                print(f"       Not after: {certificate.not_valid_after}")
-                if san_output and len(san_output) > 0:
-                    print(f"       SubjectAlternativeName: {san_output}")
-                if ext_ski:
-                    print(f"       SubjectKeyIdentifier: {ext_ski.value.digest.hex()}")
-                if ext_aki:
-                    print(f"       AuthorityKeyIdentifier: {ext_aki.value.key_identifier.hex()}")
-                if ext_bc:
-                    print(f"       BasicConstraints: CA={ext_bc.value.ca},Critical={ext_bc.critical}")
+            if not skip:
+                print(f'{linenr:>5}: {cert_name}')
+
+                if self._verbose:
+                    if subject_rest and len(subject_rest) > 0:
+                        print(f"       Subject: {subject_rest[:-1]}")
+                    print(f'       Issuer CN: {issuer_dict.get("CN")}')
+                    if issuer_rest and len(issuer_rest) > 0:
+                        print(f"       Issuer: {subject_rest[:-1]}")
+                    print(f"       Not before: {certificate.not_valid_before}")
+                    print(f"       Not after: {certificate.not_valid_after}")
+                    if san_output and len(san_output) > 0:
+                        print(f"       SubjectAlternativeName: {san_output}")
+                    if ext_ski:
+                        print(f"       SubjectKeyIdentifier: {ext_ski.value.digest.hex()}")
+                    if ext_aki:
+                        print(f"       AuthorityKeyIdentifier: {ext_aki.value.key_identifier.hex()}")
+                    if ext_bc:
+                        print(f"       BasicConstraints: CA={ext_bc.value.ca},Critical={ext_bc.critical}")
 
         return certificate, cert_name
 
@@ -323,7 +363,9 @@ def main():
         for root, dir, files in os.walk(args.filename):
             for name in files:
                 if re.match(r".*\.(pem|cert|crt|key)$", name, flags=re.IGNORECASE):
-                    file_store = FileCertStore(os.path.join(root, name), quiet=args.quiet, verbose=args.verbose, debug=args.debug)
+                    file_store = FileCertStore(os.path.join(root, name),
+                                               quiet=args.quiet, verbose=args.verbose, debug=args.debug)
+                    file_store.set_filter(cn=args.regex, ski=args.ski, aki=args.aki)
                     if args.expires is not None:
                         file_store.enable_check(check_type=FileCertStore.CHECK_EXPIRES, check_param=args.expires)
                     if not file_store.scan():
