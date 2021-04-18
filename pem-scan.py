@@ -190,6 +190,7 @@ class CertStore:
         ext_ski = None
         ext_aki = None
         ext_bc = None
+        ext_crldp = None
 
         certificate = x509.load_pem_x509_certificate(pem.encode(), default_backend())
 
@@ -238,6 +239,12 @@ class CertStore:
         except x509.extensions.ExtensionNotFound as e:
             self._logger.debug(f"BasicConstraints: {e}")
 
+        # Extension: CRL Distribution Points
+        try:
+            ext_crldp = certificate.extensions.get_extension_for_oid(x509.OID_CRL_DISTRIBUTION_POINTS)
+        except x509.extensions.ExtensionNotFound as e:
+            pass
+
         # Output
         if not self._quiet:
             skip = False
@@ -274,6 +281,10 @@ class CertStore:
                         print(f"       AuthorityKeyIdentifier: {ext_aki.value.key_identifier.hex()}")
                     if ext_bc:
                         print(f"       BasicConstraints: CA={ext_bc.value.ca},Critical={ext_bc.critical}")
+                    if ext_crldp:
+                        for dp in ext_crldp.value:
+                            for crl_uri in dp.full_name:
+                                print(f"       CRL URI: {crl_uri.value}")
 
         return certificate, cert_name
 
