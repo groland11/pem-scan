@@ -19,7 +19,7 @@ class LogFilter(logging.Filter):
 
 def parseargs():
     """Process command line arguments"""
-    parser = argparse.ArgumentParser(description="Script description")
+    parser = argparse.ArgumentParser(description="Check single file or directory for one or more X509 PEM certificates")
     parser.add_argument("-e", "--expires", type=int,
                         help="check if certificate expires in n days or less")
     parser.add_argument("--regex", type=str,

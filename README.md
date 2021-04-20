@@ -6,22 +6,35 @@
 
 # pem-scan
 Check single file or directory for one or more X509 PEM certificates and show certificate details.
-
+- Works for single PEM files or whole directory trees
+- Shows line number for each certificate in a larger file
+- Shows details for each certificate (expiration date, subject alternative names, key identifiers, etc.)
+- Searches for a certificate by name (Common Name/CN), authority key identifier (AKI) or subject key identifier (SKI)
+- Performs checks on certificates (expiration date)
 
 ## Usage
 ```
 ./pem-scan.py -h
-usage: pem-scan.py [-h] [-e EXPIRES] [-d] [-v] [-V] filename
+usage: pem-scan.py [-h] [-e EXPIRES] [--regex REGEX] [--ski SKI] [--aki AKI]
+                   [-q] [-d] [-v] [-V]
+                   filename
 
-Script description
+Check single file or directory for one or more X509 PEM certificates
 
 positional arguments:
-  filename              file or directory containing onw or more x509 certificates in PEM format
+  filename              file or directory containing onw or more x509
+                        certificates in PEM format
 
 optional arguments:
   -h, --help            show this help message and exit
   -e EXPIRES, --expires EXPIRES
                         check if certificate expires in n days or less
+  --regex REGEX         filter CN in subject by regex expression (only for
+                        directories)
+  --ski SKI             filter by subject key identifier (only for
+                        directories)
+  --aki AKI             filter by authority key identifier (only for
+                        directories)
   -q, --quiet           only display error messages
   -d, --debug           generate additional debug information
   -v, --verbose         increase output verbosity
