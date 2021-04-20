@@ -191,6 +191,9 @@ class CertStore:
         ext_aki = None
         ext_bc = None
         ext_crldp = None
+        ext_noocsp = None
+        ext_ocsp = None
+        ext_ct = None
 
         certificate = x509.load_pem_x509_certificate(pem.encode(), default_backend())
 
@@ -245,6 +248,23 @@ class CertStore:
         except x509.extensions.ExtensionNotFound as e:
             pass
 
+        # Extension: OCSP
+        try:
+            ext_noocsp = certificate.extensions.get_extension_for_oid(x509.OID_OCSP_NO_CHECK)
+        except x509.extensions.ExtensionNotFound as e:
+            pass
+
+        try:
+            ext_ocsp = certificate.extensions.get_extension_for_oid(x509.OID_AUTHORITY_INFORMATION_ACCESS)
+        except x509.extensions.ExtensionNotFound as e:
+            pass
+
+        # Extension: Certificate Transparency
+        try:
+            ext_ct = certificate.extensions.get_extension_for_oid(x509.oid.ExtensionOID.PRECERT_SIGNED_CERTIFICATE_TIMESTAMPS)
+        except x509.extensions.ExtensionNotFound as e:
+            pass
+
         # Output
         if not self._quiet:
             skip = False
@@ -276,15 +296,28 @@ class CertStore:
                     if san_output and len(san_output) > 0:
                         print(f"       SubjectAlternativeName: {san_output}")
                     if ext_ski:
-                        print(f"       SubjectKeyIdentifier: {ext_ski.value.digest.hex()}")
+                        val = ext_ski.value.digest.hex()
+                        print(f"       SubjectKeyIdentifier: {':'.join(val[s:s+2].upper() for s in range(0, len(val), 2))}")
                     if ext_aki:
-                        print(f"       AuthorityKeyIdentifier: {ext_aki.value.key_identifier.hex()}")
+                        val = ext_aki.value.key_identifier.hex()
+                        print(f"       AuthorityKeyIdentifier: {':'.join(val[s:s+2].upper() for s in range(0, len(val), 2))}")
                     if ext_bc:
                         print(f"       BasicConstraints: CA={ext_bc.value.ca},Critical={ext_bc.critical}")
                     if ext_crldp:
                         for dp in ext_crldp.value:
                             for crl_uri in dp.full_name:
                                 print(f"       CRL URI: {crl_uri.value}")
+                    if ext_noocsp:
+                        print(f"       No OCSP: {ext_noocsp.value}")
+                    if ext_ocsp:
+                        for access_description in ext_ocsp.value:
+                            # Access descriptions can be for either OCSP or issuer. We are only going for OCSP.
+                            if access_description.access_method == x509.oid.AuthorityInformationAccessOID.OCSP:
+                                print(f"       OCSP URI: {access_description.access_location.value}")
+                    if ext_ct:
+                        sct: x509.certificate_transparency.SignedCertificateTimestamp = None
+                        for sct in ext_ct.value:
+                            print(f"       Certificate Transparency Log: {sct.log_id}")
 
         return certificate, cert_name
 
