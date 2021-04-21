@@ -22,6 +22,8 @@ def parseargs():
     parser = argparse.ArgumentParser(description="Check single file or directory for one or more X509 PEM certificates")
     parser.add_argument("-e", "--expires", type=int,
                         help="check if certificate expires in n days or less")
+    parser.add_argument("-c", "--chain", action="store_true",
+                        help="check certificate chain")
     parser.add_argument("--regex", type=str,
                         help="filter CN in subject by regex expression (only for directories)")
     parser.add_argument("--ski", type=str,
@@ -96,6 +98,48 @@ class CertStore:
             return True
         else:
             return False
+
+    def is_rootca(self, cert: x509.Certificate) -> bool:
+        """
+        Check if certificate is Root CA:
+        - Ommit check for Basic Constraint (assume that self-signed certificates are also some sort of Root Ca)
+        - Next check if AKI is identical to SKI
+        - If AKI of SKI is missing, compare issuer to certificate name
+        """
+        # Check BasicConstraint
+        try:
+            ext_bc = cert.extensions.get_extension_for_oid(x509.OID_BASIC_CONSTRAINTS)
+        except x509.extensions.ExtensionNotFound as e:
+            # Assume that Root CAs must have Basic Constraint set
+            return False
+
+        #if ext_bc.value.ca == False:
+        #    return False
+
+        # Check if AKI == SKI
+        try:
+            ext_ski = cert.extensions.get_extension_for_oid(x509.OID_SUBJECT_KEY_IDENTIFIER)
+            ext_aki = cert.extensions.get_extension_for_oid(x509.OID_AUTHORITY_KEY_IDENTIFIER)
+        except x509.extensions.ExtensionNotFound as e:
+            pass
+        else:
+            if ext_ski.value.digest.hex() == ext_aki.value.key_identifier.hex():
+                return True
+            else:
+                return False
+
+        # Check if issuer == certificate name
+        subject_dict = self.scan_subject(cert.subject.rfc4514_string())
+        # Some certificates do not have a CN set in subject. Use OU instead.
+        subject_name = subject_dict.get("CN") if subject_dict.get("CN") is not None else subject_dict.get("OU")
+
+        issuer_dict = self.scan_subject(cert.issuer.rfc4514_string())
+        issuer_name = issuer_dict.get("CN") if issuer_dict.get("CN") is not None else issuer_dict.get("OU")
+
+        if issuer_name == subject_name:
+            return True
+
+        return False
 
     def check_expires(self, expires: int = 0) -> bool:
         """
@@ -387,7 +431,20 @@ class FileCertStore(CertStore):
         return ret
 
 
-def check_chain(cert_stor_list: CertStore) -> None:
+def find_cert(cert_stor_list: CertStore, name: str) -> x509.Certificate:
+    """Find certificate by name"""
+    for file_stor in cert_stor_list:
+        for ski, cert in file_stor.cert_list.items():
+            sdict = file_stor.scan_subject(cert.subject.rfc4514_string())
+            cert_name = sdict.get("CN") if sdict.get("CN") is not None else sdict.get("OU")
+
+            if cert_name == name:
+                return cert
+
+    return None
+
+
+def check_chain(cert_stor_list: CertStore) -> bool:
     """
     Check that signing CA for every server certificate exists.
     Check that signing CA for every intermediate CA exists.
@@ -398,25 +455,42 @@ def check_chain(cert_stor_list: CertStore) -> None:
     logger = logging.getLogger(__name__)
     logger.debug("CHECK INFO   : ...")
 
+    ret = True
+
     for file_stor in cert_stor_list:
         for ski, cert in file_stor.cert_list.items():
 
             # Some certificates do not have a CN set in subject. Use OU instead.
             sdict = file_stor.scan_subject(cert.subject.rfc4514_string())
             cert_name = sdict.get("CN") if sdict.get("CN") is not None else sdict.get("OU")
-            logger.debug(f"CHECK INFO   : Checking chain for {cert_name} ({ski}) ...")
+
+            issuer_dict = file_stor.scan_subject(cert.issuer.rfc4514_string())
+            issuer_name = issuer_dict.get("CN") if issuer_dict.get("CN") is not None else issuer_dict.get("OU")
+
+            logger.debug(f"CHECK INFO   : Checking '{cert_name}' ({ski}) for issuer '{issuer_name}' ...")
 
             if file_stor.is_rootca(cert):
-                logger.debug(f"CHECK INFO   : Skipping Root CA {cert_name}")
+                logger.debug(f"CHECK INFO   : Skipping Root CA '{cert_name}'")
                 continue
 
             try:
                 ext_aki = cert.extensions.get_extension_for_oid(x509.OID_AUTHORITY_KEY_IDENTIFIER)
                 aki = ext_aki.value.key_identifier.hex()
                 if aki in file_stor.cert_list:
-                    logger.debug(f"CHECK OK     : Found issuer {cert.issuer.rfc4514_string()}")
+                    logger.debug(f"CHECK OK     : Found issuer '{issuer_name}'")
+                else:
+                    logger.error(f"Failed chain check for '{cert_name}'")
+                    ret = False
             except x509.extensions.ExtensionNotFound as e:
-                logger.debug(f"CHECK WARNING: Missing AuthorityKeyIdentifier for {cert_name}")
+                logger.debug(f"CHECK WARNING: Missing AuthorityKeyIdentifier for '{cert_name}'")
+                ca_cert = find_cert(cert_stor_list, issuer_name)
+                if ca_cert is not None:
+                    logger.debug(f"CHECK OK     : Found issuer '{issuer_name}'")
+                else:
+                    logger.error(f"Failed chain check for '{cert_name}'")
+                    ret = False
+
+    return ret
 
 
 def main():
@@ -449,7 +523,8 @@ def main():
                     cert_store_list.append(file_store)
 
         if args.chain is not None:
-            check_chain(cert_store_list)
+            if not check_chain(cert_store_list):
+                ret = False
 
     exit(int(ret))
 
