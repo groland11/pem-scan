@@ -75,7 +75,7 @@ class CertStore:
         self._verbose = verbose
         self._debug = debug
         self._logger = logging.getLogger(__name__)
-        self._cert_list = {}
+        self.cert_list = {}
         self._current_cert: x509.Certificate = None
         self._check_list = {}
         self.filter_cn = None
@@ -85,8 +85,8 @@ class CertStore:
     def set_filter(self, cn: str = None, ski: str = None, aki: str = None) -> None:
         """Set filter for certificates by subject or attributes"""
         self.filter_cn = cn
-        self.filter_ski = ski
-        self.filter_aki = aki
+        self.filter_ski = None if ski is None else ski.replace(":", "").lower()
+        self.filter_aki = None if aki is None else aki.replace(":", "").lower()
 
     def has_filter(self) -> bool:
         """Returns True if any filter has been set"""
@@ -149,8 +149,8 @@ class CertStore:
         else:
             key = ext_ski.value.digest.hex()
 
-        if self._cert_list.get(key) is None:
-            self._cert_list[key] = cert
+        if self.cert_list.get(key) is None:
+            self.cert_list[key] = cert
         else:
             raise ValueError(
                 f'Duplicate certificate for {self.scan_subject(cert.subject.rfc4514_string()).get("CN")}')
@@ -387,6 +387,38 @@ class FileCertStore(CertStore):
         return ret
 
 
+def check_chain(cert_stor_list: CertStore) -> None:
+    """
+    Check that signing CA for every server certificate exists.
+    Check that signing CA for every intermediate CA exists.
+
+    :param cert_stor_list: List of certificate stores
+    :return:
+    """
+    logger = logging.getLogger(__name__)
+    logger.debug("CHECK INFO   : ...")
+
+    for file_stor in cert_stor_list:
+        for ski, cert in file_stor.cert_list.items():
+
+            # Some certificates do not have a CN set in subject. Use OU instead.
+            sdict = file_stor.scan_subject(cert.subject.rfc4514_string())
+            cert_name = sdict.get("CN") if sdict.get("CN") is not None else sdict.get("OU")
+            logger.debug(f"CHECK INFO   : Checking chain for {cert_name} ({ski}) ...")
+
+            if file_stor.is_rootca(cert):
+                logger.debug(f"CHECK INFO   : Skipping Root CA {cert_name}")
+                continue
+
+            try:
+                ext_aki = cert.extensions.get_extension_for_oid(x509.OID_AUTHORITY_KEY_IDENTIFIER)
+                aki = ext_aki.value.key_identifier.hex()
+                if aki in file_stor.cert_list:
+                    logger.debug(f"CHECK OK     : Found issuer {cert.issuer.rfc4514_string()}")
+            except x509.extensions.ExtensionNotFound as e:
+                logger.debug(f"CHECK WARNING: Missing AuthorityKeyIdentifier for {cert_name}")
+
+
 def main():
     """Main program flow"""
     cert_store_list = []
@@ -415,6 +447,9 @@ def main():
                     if not file_store.scan():
                         ret = False
                     cert_store_list.append(file_store)
+
+        if args.chain is not None:
+            check_chain(cert_store_list)
 
     exit(int(ret))
 
