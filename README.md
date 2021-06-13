@@ -35,7 +35,7 @@ optional arguments:
                         directories)
   --aki AKI             filter by authority key identifier (only for
                         directories)
-  -q, --quiet           only display error messages
+  -q, --quiet           only display error messages and certificate file names
   -d, --debug           generate additional debug information
   -v, --verbose         increase output verbosity
   -V, --version         show program's version number and exit

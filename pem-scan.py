@@ -31,7 +31,7 @@ def parseargs():
     parser.add_argument("--aki", type=str,
                         help="filter by authority key identifier (only for directories)")
     parser.add_argument("-q", "--quiet", action="store_true",
-                        help="only display error messages")
+                        help="only display error messages and certificate file names")
     parser.add_argument("-d", "--debug", action="store_true",
                         help="generate additional debug information")
     parser.add_argument("-v", "--verbose", action="store_true",
@@ -71,6 +71,7 @@ class CertStore:
     """
     # Types of checks that can be performed on certificates
     CHECK_EXPIRES = 0
+    CHECK_CAA = 0
 
     def __init__(self, quiet: bool = False, verbose: bool = False, debug: bool = False):
         self._quiet = quiet
@@ -109,7 +110,7 @@ class CertStore:
         # Check BasicConstraint
         try:
             ext_bc = cert.extensions.get_extension_for_oid(x509.OID_BASIC_CONSTRAINTS)
-        except x509.extensions.ExtensionNotFound as e:
+        except x509.extensions.ExtensionNotFound:
             # Assume that Root CAs must have Basic Constraint set
             return False
 
@@ -120,7 +121,7 @@ class CertStore:
         try:
             ext_ski = cert.extensions.get_extension_for_oid(x509.OID_SUBJECT_KEY_IDENTIFIER)
             ext_aki = cert.extensions.get_extension_for_oid(x509.OID_AUTHORITY_KEY_IDENTIFIER)
-        except x509.extensions.ExtensionNotFound as e:
+        except x509.extensions.ExtensionNotFound:
             pass
         else:
             if ext_ski.value.digest.hex() == ext_aki.value.key_identifier.hex():
@@ -154,6 +155,13 @@ class CertStore:
 
         return True
 
+    def check_caa(self, param=0) -> bool:
+        """
+        Check if CAA record in DNS conforms to issuer attribute in certificate
+        Errors will be written to stdout
+        """
+        pass
+
     def enable_check(self, check_type: int, check_param: object) -> None:
         """
         Enabble individual checks on certificate data
@@ -161,6 +169,8 @@ class CertStore:
         """
         if check_type == CertStore.CHECK_EXPIRES:
             self._check_list[self.check_expires] = check_param
+        if check_type == CertStore.CHECK_CAA:
+            self._check_list[self.check_caa] = None
 
     def run_checks(self) -> bool:
         """
@@ -289,24 +299,24 @@ class CertStore:
         # Extension: CRL Distribution Points
         try:
             ext_crldp = certificate.extensions.get_extension_for_oid(x509.OID_CRL_DISTRIBUTION_POINTS)
-        except x509.extensions.ExtensionNotFound as e:
+        except x509.extensions.ExtensionNotFound:
             pass
 
         # Extension: OCSP
         try:
             ext_noocsp = certificate.extensions.get_extension_for_oid(x509.OID_OCSP_NO_CHECK)
-        except x509.extensions.ExtensionNotFound as e:
+        except x509.extensions.ExtensionNotFound:
             pass
 
         try:
             ext_ocsp = certificate.extensions.get_extension_for_oid(x509.OID_AUTHORITY_INFORMATION_ACCESS)
-        except x509.extensions.ExtensionNotFound as e:
+        except x509.extensions.ExtensionNotFound:
             pass
 
         # Extension: Certificate Transparency
         try:
             ext_ct = certificate.extensions.get_extension_for_oid(x509.oid.ExtensionOID.PRECERT_SIGNED_CERTIFICATE_TIMESTAMPS)
-        except x509.extensions.ExtensionNotFound as e:
+        except x509.extensions.ExtensionNotFound:
             pass
 
         # Output
@@ -344,7 +354,8 @@ class CertStore:
                         print(f"       SubjectKeyIdentifier: {':'.join(val[s:s+2].upper() for s in range(0, len(val), 2))}")
                     if ext_aki:
                         val = ext_aki.value.key_identifier.hex()
-                        print(f"       AuthorityKeyIdentifier: {':'.join(val[s:s+2].upper() for s in range(0, len(val), 2))}")
+                        print(f"       AuthorityKeyIdentifier: "
+                              f"{':'.join(val[s:s+2].upper() for s in range(0, len(val), 2))}")
                     if ext_bc:
                         print(f"       BasicConstraints: CA={ext_bc.value.ca},Critical={ext_bc.critical}")
                     if ext_crldp:
@@ -481,7 +492,7 @@ def check_chain(cert_stor_list: CertStore) -> bool:
                 else:
                     logger.error(f"Failed chain check for '{cert_name}'")
                     ret = False
-            except x509.extensions.ExtensionNotFound as e:
+            except x509.extensions.ExtensionNotFound:
                 logger.debug(f"CHECK WARNING: Missing AuthorityKeyIdentifier for '{cert_name}'")
                 ca_cert = find_cert(cert_stor_list, issuer_name)
                 if ca_cert is not None:
