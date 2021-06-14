@@ -24,6 +24,8 @@ def parseargs():
                         help="check if certificate expires in n days or less")
     parser.add_argument("-c", "--chain", action="store_true",
                         help="check certificate chain")
+    parser.add_argument("--caa", action="store_true",
+                        help="check CAA record in DNS")
     parser.add_argument("--regex", type=str,
                         help="filter CN in subject by regex expression (only for directories)")
     parser.add_argument("--ski", type=str,
@@ -71,7 +73,7 @@ class CertStore:
     """
     # Types of checks that can be performed on certificates
     CHECK_EXPIRES = 0
-    CHECK_CAA = 0
+    CHECK_CAA = 1
 
     def __init__(self, quiet: bool = False, verbose: bool = False, debug: bool = False):
         self._quiet = quiet
