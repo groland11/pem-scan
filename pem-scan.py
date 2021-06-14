@@ -11,6 +11,20 @@ from cryptography import x509
 from cryptography.hazmat.backends import default_backend
 # from cryptography.hazmat.primitives.serialization import load_pem_public_key
 
+try:
+    from colorama import init, Back, Cursor, Fore, Style
+except ImportError:
+    from collections import UserString
+
+    class ColoramaMock(UserString):
+        def __call__(self, *args, **kwargs):
+            return self
+        def __getattr__(self, key):
+            return self
+
+    init = ColoramaMock("")
+    Back = Cursor = Fore = Style = ColoramaMock("")
+
 
 class LogFilter(logging.Filter):
     def filter(self, record):
@@ -151,7 +165,7 @@ class CertStore:
         """
         diff_delta = self._current_cert.not_valid_after - datetime.now()
         if diff_delta < timedelta(days=expires):
-            self._logger.error(f"FAIL: Certificate expires in {diff_delta.days} days \
+            self._logger.error(f"{Fore.LIGHTWHITE_EX}{Back.RED}FAIL{Style.RESET_ALL}: Certificate expires in {diff_delta.days} days \
 ({self._current_cert.not_valid_after.strftime('%Y-%m-%d')})")
             return False
 
