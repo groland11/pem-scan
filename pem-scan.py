@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
+# Requires package python3-dnspython
 
 import argparse
+import csv
 from datetime import datetime, timedelta
+import dns.resolver
 import logging
 import os
 import re
 import sys
+
+import google_ctr
 
 from cryptography import x509
 from cryptography.hazmat.backends import default_backend
@@ -40,6 +45,8 @@ def parseargs():
                         help="check certificate chain")
     parser.add_argument("--caa", action="store_true",
                         help="check CAA record in DNS")
+    parser.add_argument("--ctr", action="store_true",
+                        help="check Certificate Transparency Record (CTR)")
     parser.add_argument("--regex", type=str,
                         help="filter CN in subject by regex expression (only for directories)")
     parser.add_argument("--ski", type=str,
@@ -108,13 +115,101 @@ class CertStore:
         self.filter_aki = None if aki is None else aki.replace(":", "").lower()
 
     def has_filter(self) -> bool:
-        """Returns True if any filter has been set"""
+        """Return True if any filter has been set"""
         if self.filter_cn is not None or \
                 self.filter_ski is not None or \
                 self.filter_aki is not None:
             return True
         else:
             return False
+
+    def get_subject(self) -> str:
+        """Return subject of current certificate"""
+        if self._current_cert == None:
+            return ""
+
+        subject_dict = self.scan_subject(self._current_cert.subject.rfc4514_string())
+        # Some certificates do not have a CN set in subject. Use OU instead.
+        subject_name = subject_dict.get("CN") if subject_dict.get("CN") is not None else subject_dict.get("OU")
+        return subject_name
+
+    def get_serialnumber(self) -> str:
+        """Return serialnumber of current certificate"""
+        if self._current_cert == None:
+            return ""
+
+        serialstring = ""
+        serialnumber = "{0:x}".format(self._current_cert.serial_number)
+        for i in range(0, len(serialnumber), 2):
+            serialstring += serialnumber[i:i+2] + ":"
+
+        return serialstring[:-1]
+
+    def get_hostnames(self) -> set:
+        """Return list of hostnames / domains for which certificate has been signed"""
+        hostnames = set()
+
+        if self._current_cert == None:
+            return hostnames
+
+        # Get CN
+        subject = self._current_cert.subject.rfc4514_string()
+        cn = self.scan_subject(subject).get("CN")
+        if cn is None:
+            return hostnames
+        else:
+            hostnames.add(cn)
+
+        # Get additional hostnames from X509v3 Subject Alternative Name extension
+        try:
+            ext_san = self._current_cert.extensions.get_extension_for_oid(x509.OID_SUBJECT_ALTERNATIVE_NAME)
+            hostnames.update(ext_san.value.get_values_for_type(x509.DNSName))
+        except x509.extensions.ExtensionNotFound as e:
+            pass
+
+        return hostnames
+
+    def get_issuer(self) -> str:
+        """Return issuer of current certificate"""
+        if self._current_cert == None:
+            return ""
+
+        issuer_dict = self.scan_subject(self._current_cert.issuer.rfc4514_string())
+        # Some certificates do not have a CN set in subject. Use OU instead.
+        issuer_name = issuer_dict.get("CN") if issuer_dict.get("CN") is not None else issuer_dict.get("OU")
+        return issuer_name
+
+    def get_organisation(self) -> str:
+        """Return issuer organisation of current certificate"""
+        if self._current_cert == None:
+            return ""
+
+        issuer_dict = self.scan_subject(self._current_cert.issuer.rfc4514_string())
+        # Some certificates do not have a CN set in subject. Use OU instead.
+        issuer_organisation = issuer_dict.get("O") if issuer_dict.get("O") is not None else issuer_dict.get("OU")
+        return issuer_organisation
+
+    def is_ca(self) -> bool:
+        """
+        Check if certificate is CA:
+        - Only check for Basic Constraint Extension
+
+        :return: True - Certificate is a CA certificate
+        """
+        # Gracefully handle error conditions
+        if self._current_cert is None:
+            return False
+
+        # Check BasicConstraint
+        try:
+            ext_bc = self._current_cert.extensions.get_extension_for_oid(x509.OID_BASIC_CONSTRAINTS)
+            if ext_bc.value.ca == True:
+                return True
+        except x509.extensions.ExtensionNotFound:
+            # Assume that Root CAs must have Basic Constraint set
+            return False
+
+        return False
 
     def is_rootca(self, cert: x509.Certificate) -> bool:
         """
@@ -145,11 +240,8 @@ class CertStore:
             else:
                 return False
 
-        # Check if issuer == certificate name
-        subject_dict = self.scan_subject(cert.subject.rfc4514_string())
-        # Some certificates do not have a CN set in subject. Use OU instead.
-        subject_name = subject_dict.get("CN") if subject_dict.get("CN") is not None else subject_dict.get("OU")
-
+        # Check if subject and issuer are identical
+        subject_name = self.get_subject()
         issuer_dict = self.scan_subject(cert.issuer.rfc4514_string())
         issuer_name = issuer_dict.get("CN") if issuer_dict.get("CN") is not None else issuer_dict.get("OU")
 
@@ -171,14 +263,54 @@ class CertStore:
 
         return True
 
-    def check_caa(self, param=0) -> bool:
+    def validate_caa(self, issuer_domain: str, issuer_cn: str, issuer_o: str) -> bool:
         """
-        Check if CAA record in DNS conforms to issuer attribute in certificate
-        Errors will be written to stdout
-        """
-        pass
+        Check if issuer_domain as given in CAA record matches CN in issuer field of certificate
+        Reads CSV file 'IncludedCACertificateReport.csv' in current directory
+        (s. https://wiki.mozilla.org/CA/Included_Certificates)
 
-    def enable_check(self, check_type: int, check_param: object) -> None:
+        :param issuer_domain:
+        :param issuer_cn:
+        :return:
+        """
+        filename = os.path.join(os.path.dirname(os.path.realpath(__file__)), "IncludedCACertificateReport.csv")
+
+        if issuer_domain == ";" or issuer_domain == "":
+            self._logger.debug(f"CHECK INFO   : Invalid issuer domain {issuer_domain}")
+            return False
+
+        try:
+            with open(filename, "r") as file:
+                reader = csv.DictReader(file)
+                for row in reader:
+                    domain = ""
+
+                    match = re.match(r"https?://([^/]+)", row.get('Company Website'))
+                    if match:
+                        domain = match.group(1)
+                        while len(domain.split('.')) > 2:
+                            domain = domain.split('.', maxsplit=1)[1]
+
+                    if issuer_domain == domain:
+                        if issuer_cn == row.get('Common Name or Certificate Name'):
+                            return True
+                        else:
+                            self._logger.debug(
+                                f"CHECK INFO   : CAA - {row.get('Common Name or Certificate Name')} not matching "
+                                f"certificate CN {issuer_cn}")
+                        if row.get('Certificate Issuer Organization').startswith(issuer_o):
+                            return True
+                        else:
+                            self._logger.debug(
+                                f"CHECK INFO   : CAA - '{row.get('Certificate Issuer Organization')}' not matching "
+                                f"certificate organization '{issuer_o}'")
+        except FileNotFoundError:
+            self._logger.error(f"Missing CSV file {filename} with list of valid CAs (s. https://wiki.mozilla.org/CA/Included_Certificates)")
+
+        self._logger.error(f"{Fore.LIGHTWHITE_EX}{Back.RED}FAIL{Style.RESET_ALL}: Issuer '{issuer_cn}' not matching CAA info")
+        return False
+
+    def enable_check(self, check_type: int, check_param: object=None) -> None:
         """
         Enabble individual checks on certificate data
         Checks to be performed are all stored in a dictionary
@@ -270,14 +402,14 @@ class CertStore:
         # Common Name (CN)
         subject = certificate.subject.rfc4514_string()
         self._logger.debug(subject)
-        sdict = self.scan_subject(subject)
+        subject_dict = self.scan_subject(subject)
         # Some certificates do not have a CN set in subject. Use OU instead.
-        cert_name = sdict.get("CN") if sdict.get("CN") is not None else sdict.get("OU")
+        cert_name = subject_dict.get("CN") if subject_dict.get("CN") is not None else subject_dict.get("OU")
 
         # Rest of subject line without CN
         subject_rest = ""
         for key in ('O', 'OU', 'C'):
-            subject_rest += f"{key}={sdict[key]}," if sdict.get(key) else ""
+            subject_rest += f"{key}={subject_dict[key]}," if subject_dict.get(key) else ""
 
         # Certificate issuer
         issuer = certificate.issuer.rfc4514_string()
@@ -285,7 +417,7 @@ class CertStore:
 
         issuer_rest = ""
         for key in ('O', 'OU', 'C'):
-            issuer_rest += f"{key}={sdict[key]}," if sdict.get(key) else ""
+            issuer_rest += f"{key}={issuer_dict[key]}," if issuer_dict.get(key) else ""
 
         # Extension: SubjectAlternativeName
         try:
@@ -360,7 +492,7 @@ class CertStore:
                         print(f"       Subject: {subject_rest[:-1]}")
                     print(f'       Issuer CN: {issuer_dict.get("CN")}')
                     if issuer_rest and len(issuer_rest) > 0:
-                        print(f"       Issuer: {subject_rest[:-1]}")
+                        print(f"       Issuer: {issuer_rest[:-1]}")
                     print(f"       Not before: {certificate.not_valid_before}")
                     print(f"       Not after: {certificate.not_valid_after}")
                     if san_output and len(san_output) > 0:
@@ -458,7 +590,7 @@ class FileCertStore(CertStore):
         return ret
 
 
-def find_cert(cert_stor_list: CertStore, name: str) -> x509.Certificate:
+def find_cert(cert_stor_list: list, name: str) -> x509.Certificate:
     """Find certificate by name"""
     for file_stor in cert_stor_list:
         for ski, cert in file_stor.cert_list.items():
@@ -471,16 +603,16 @@ def find_cert(cert_stor_list: CertStore, name: str) -> x509.Certificate:
     return None
 
 
-def check_chain(cert_stor_list: CertStore) -> bool:
+def check_chain(cert_stor_list: list) -> bool:
     """
     Check that signing CA for every server certificate exists.
     Check that signing CA for every intermediate CA exists.
 
     :param cert_stor_list: List of certificate stores
-    :return:
+    :return: True - Check passed
     """
     logger = logging.getLogger(__name__)
-    logger.debug("CHECK INFO   : ...")
+    logger.debug("CHECK INFO   : check_chain")
 
     ret = True
 
@@ -520,23 +652,149 @@ def check_chain(cert_stor_list: CertStore) -> bool:
     return ret
 
 
+def check_caa(cert_stor_list: list) -> bool:
+    """
+    Check if CAA record in DNS conforms to issuer attribute in certificate
+    Valid CAs are taken from https://wiki.mozilla.org/CA/Included_Certificates
+    Errors will be written to stdout
+
+    :param cert_stor_list: List of certificate stores
+    :return: True - Check passed
+    """
+    # TODO: First find root CA, then check root CA against CAA info
+    issuers = []
+    ret = True
+    logger = logging.getLogger(__name__)
+
+    for file_stor in cert_stor_list:
+        hostnames = file_stor.get_hostnames()
+        subject = file_stor.get_subject()
+
+        # Do not check CA certificates
+        if file_stor.is_ca():
+            continue
+
+        logger.debug(f"CHECK INFO   : check_caa for cert '{subject}'")
+
+        # There can be multiple hostnames/domains in a certificate
+        for hostname in hostnames:
+            logger.debug(f"CHECK INFO   : check_caa for hostname '{hostname}'")
+            hostname_ok = False
+
+            # Lookup CAA record for hostname itself and all parent domains
+            while(len(hostname.split('.')) >= 2):
+                try:
+                    result = dns.resolver.query(hostname, 'CAA', raise_on_no_answer=False)
+                except dns.resolver.NXDOMAIN as e:
+                    break
+
+                if len(result.response.answer) == 0:
+                    # If we didn't receive a caa record, try parent domain
+                    try:
+                        hostname = hostname.split('.', 1)[1]
+                    except IndexError:
+                        pass
+                else:
+                    # There can be more than one CAA record for a hostname / domain
+                    for answer in result.response.answer:
+                        for record in answer:
+                            match = re.match(r"\d+ issue (.*)", record.to_text())
+                            if match:
+                                issuers.append(match.group(1).replace('"', ''))
+
+                    # No valid issuers in CAA record found
+                    if len(issuers) == 0:
+                        try:
+                            hostname = hostname.split('.', 1)[1]
+                        except IndexError:
+                            pass
+                        continue
+
+                    for issuer in issuers:
+                        logger.debug(f"CHECK INFO   : CAA check for {issuer} ...")
+                        if file_stor.validate_caa(issuer, file_stor.get_issuer(), file_stor.get_organisation()):
+                            logger.debug(f"CHECK INFO   : Sucessfully checked CAA for hostname '{hostname}'")
+                            hostname_ok = True
+                            hostname = ""
+                            break
+
+            if not hostname_ok:
+                # If one hostname check fails, the whole caa check fails
+                ret = False
+
+    # If there is no CAA info, check will pass ok
+    return ret
+
+
+def check_ctr(cert_stor_list: list) -> bool:
+    """
+    Check certificate transparency report (CTR)
+    Errors will be written to stdout
+
+    :param cert_stor_list: List of certificate stores
+    :return: True - Check passed
+    """
+    ret = True
+    logger = logging.getLogger(__name__)
+
+    for file_stor in cert_stor_list:
+        issuer = file_stor.get_issuer()
+        subject = file_stor.get_subject()
+        hostnames = file_stor.get_hostnames()
+        serialnumber = file_stor.get_serialnumber()
+
+        # Do not check CA certificates
+        if file_stor.is_ca():
+            continue
+
+        for hostname in hostnames:
+            logger.debug(f"CHECK INFO   : check_ctr for cert '{subject}', hostname '{hostname}'")
+            hostname_ok = False
+
+            ctr_hashes = google_ctr.GoogleCTR_API().get_certificates_of_domain(hostname)
+            logger.debug(f"CHECK INFO   : Retrieved {len(ctr_hashes)} certificate transparency log entries for hostname '{hostname}'")
+            for ctr_hash in ctr_hashes:
+                cert_data = google_ctr.GoogleCTR_API().get_certificate_details(ctr_hash)
+                ct_serialnumber = cert_data.get('serialNumber')
+                if ct_serialnumber is not None and ct_serialnumber.lower() == serialnumber:
+                    logger.debug(f"CHECK INFO   : Found serial {serialnumber} in CT log")
+                    try:
+                        match = re.search(f"CN={issuer}", cert_data.get('issuer'))
+                    except:
+                        pass
+                    else:
+                        if match:
+                            logger.debug(f"CHECK INFO   : Found issuer '{issuer}' in CT log")
+                            hostname_ok = True
+                            break
+                else:
+                    logger.debug(f"CHECK INFO   : serial = '{ct_serialnumber}'")
+
+            if not hostname_ok:
+                # If one hostname check fails, the whole ctr check fails
+                ret = False
+
+    return ret
+
+
 def main():
     """Main program flow"""
     cert_store_list = []
     args = parseargs()
-    get_logger(args.debug)
-    ret = True
+    logger = get_logger(args.debug)
+    file_store = None
+    ret = 0
 
     # Scan a single file
     if os.path.isfile(args.filename):
         file_store = FileCertStore(args.filename, quiet=args.quiet, verbose=args.verbose, debug=args.debug)
         if args.expires is not None:
             file_store.enable_check(check_type=FileCertStore.CHECK_EXPIRES, check_param=args.expires)
-        ret = file_store.scan()
+        if not file_store.scan():
+            ret += 1
         cert_store_list.append(file_store)
-
     # Scan a directory and all subdirectories
-    if os.path.isdir(args.filename):
+    elif os.path.isdir(args.filename):
         for root, dir, files in os.walk(args.filename):
             for name in files:
                 if re.match(r".*\.(pem|cert|crt|key)$", name, flags=re.IGNORECASE):
@@ -546,14 +804,28 @@ def main():
                     if args.expires is not None:
                         file_store.enable_check(check_type=FileCertStore.CHECK_EXPIRES, check_param=args.expires)
                     if not file_store.scan():
-                        ret = False
+                        ret += 1
                     cert_store_list.append(file_store)
 
-        if args.chain is not None:
-            if not check_chain(cert_store_list):
-                ret = False
+                    # Check of certificate chain only if checking directory trees
+                    if args.chain == True:
+                        if not check_chain(cert_store_list):
+                            ret += 1
+    else:
+        # Invalid file/directory command line argument
+        logger.error(f"Invalid file/directory argument '{args.filename}'")
+        ret = 1
 
-    exit(int(ret))
+    # All remaining checks
+    if file_store is not None:
+        if args.caa == True:
+            if not check_caa(cert_store_list):
+                ret += 1
+        if args.ctr == True:
+            if not check_ctr(cert_store_list):
+                ret += 1
+
+    exit(ret)
 
 
 if __name__ == '__main__':
