@@ -6,10 +6,11 @@ import csv
 from datetime import datetime, timedelta
 import dns.resolver
 import logging
+import OpenSSL
 import os
 import re
 import sys
-
+import urllib.request
 import google_ctr
 
 from cryptography import x509
@@ -43,6 +44,8 @@ def parseargs():
                         help="check if certificate expires in n days or less")
     parser.add_argument("-c", "--chain", action="store_true",
                         help="check certificate chain")
+    parser.add_argument("--crl", action="store_true",
+                        help="check Certificate Revocation List (CRL)")
     parser.add_argument("--caa", action="store_true",
                         help="check CAA record in DNS")
     parser.add_argument("--ctr", action="store_true",
@@ -95,6 +98,7 @@ class CertStore:
     # Types of checks that can be performed on certificates
     CHECK_EXPIRES = 0
     CHECK_CAA = 1
+    CHECK_CRL = 2
 
     def __init__(self, quiet: bool = False, verbose: bool = False, debug: bool = False):
         self._quiet = quiet
@@ -263,6 +267,39 @@ class CertStore:
 
         return True
 
+    def check_crl(self, param=None) -> bool:
+        """
+        Check certificate revocation lists
+        Errors will be written to stdout
+        """
+        try:
+            ext_crldp = self._current_cert.extensions.get_extension_for_oid(x509.OID_CRL_DISTRIBUTION_POINTS)
+        except x509.extensions.ExtensionNotFound:
+            return True
+
+        for dp in ext_crldp.value:
+            for crl_uri in dp.full_name:
+                try:
+                    crl_filename, headers = urllib.request.urlretrieve(crl_uri.value)
+                except  urllib.error.HTTPError as e:
+                    self._logger.warning(f"CRL: Error loading CRL from {crl_uri.value} ({e})")
+                    return False
+
+                with open(crl_filename, 'r') as crl_file:
+                    crl = "".join(crl_file.readlines())
+
+                crl_object = OpenSSL.crypto.load_crl(OpenSSL.crypto.FILETYPE_PEM, crl)
+                revoked_objects = crl_object.get_revoked()
+                for rvk in revoked_objects:
+                    self._logger.debug(f"       Revoked Serial: {rvk.get_serial()}")
+                    if rvk.get_serial() == self._current_cert.serial_number:
+                        self._logger.error(
+                            f"{Fore.LIGHTWHITE_EX}{Back.RED}FAIL{Style.RESET_ALL}: \
+                            Certificate has been revoked (Serial={rvk.get_serial()})")
+                        return False
+
+        return True
+
     def validate_caa(self, issuer_domain: str, issuer_cn: str, issuer_o: str) -> bool:
         """
         Check if issuer_domain as given in CAA record matches CN in issuer field of certificate
@@ -319,6 +356,8 @@ class CertStore:
             self._check_list[self.check_expires] = check_param
         if check_type == CertStore.CHECK_CAA:
             self._check_list[self.check_caa] = None
+        if check_type == CertStore.CHECK_CRL:
+            self._check_list[self.check_crl] = None
 
     def run_checks(self) -> bool:
         """
@@ -790,6 +829,8 @@ def main():
         file_store = FileCertStore(args.filename, quiet=args.quiet, verbose=args.verbose, debug=args.debug)
         if args.expires is not None:
             file_store.enable_check(check_type=FileCertStore.CHECK_EXPIRES, check_param=args.expires)
+        if args.crl:
+            file_store.enable_check(check_type=FileCertStore.CHECK_CRL)
         if not file_store.scan():
             ret += 1
         cert_store_list.append(file_store)
@@ -803,6 +844,8 @@ def main():
                     file_store.set_filter(cn=args.regex, ski=args.ski, aki=args.aki)
                     if args.expires is not None:
                         file_store.enable_check(check_type=FileCertStore.CHECK_EXPIRES, check_param=args.expires)
+                    if args.crl:
+                        file_store.enable_check(check_type=FileCertStore.CHECK_CRL)
                     if not file_store.scan():
                         ret += 1
                     cert_store_list.append(file_store)
@@ -818,10 +861,10 @@ def main():
 
     # All remaining checks
     if file_store is not None:
-        if args.caa == True:
+        if args.caa:
             if not check_caa(cert_store_list):
                 ret += 1
-        if args.ctr == True:
+        if args.ctr:
             if not check_ctr(cert_store_list):
                 ret += 1
 
