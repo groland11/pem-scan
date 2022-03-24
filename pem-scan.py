@@ -2,6 +2,7 @@
 # Requires package python3-dnspython
 
 import argparse
+import configparser
 import csv
 from datetime import datetime, timedelta
 import dns.resolver
@@ -816,11 +817,43 @@ def check_ctr(cert_stor_list: list) -> bool:
     return ret
 
 
+def get_config() -> set:
+    """
+    Read configuration file
+
+    :return: Dictionary of configuration values
+    """
+    logger = logging.getLogger(__name__)
+    filenames = [os.getcwd() + "/pem-scan.ini", "/etc/pem-scan.ini"]
+    files = []
+    ret = {}
+
+    cp = configparser.ConfigParser()
+    for filename in filenames:
+        try:
+            files = cp.read(filename)
+            break
+        except Exception as e:
+            logger.debug(f"Unable to open config file '{filename}' ({e})'")
+            pass
+
+    if len(files) == 0:
+        return (None, [])
+
+    for key in cp['release']:
+        ret[key] = cp['release'][key]
+        if key == "exclude":
+            excludes = ret[key].split(",")
+
+    return (ret, excludes)
+
+
 def main():
     """Main program flow"""
     cert_store_list = []
     args = parseargs()
     logger = get_logger(args.debug)
+    config, excludes = get_config()
     file_store = None
     ret = 0
 
@@ -838,9 +871,19 @@ def main():
     elif os.path.isdir(args.filename):
         for root, dir, files in os.walk(args.filename):
             for name in files:
+                skip = False
+
+                # Check if directory is excluded in configuration file
+                filename = os.path.join(root, name)
+                for exclude in excludes:
+                    if re.match(exclude, filename):
+                        skip = True
+                        logger.debug(f"Skipping excluded file '{filename}'")
+                        break
+                if skip: continue
+
                 if re.match(r".*\.(pem|cert|crt|key)$", name, flags=re.IGNORECASE):
-                    file_store = FileCertStore(os.path.join(root, name),
-                                               quiet=args.quiet, verbose=args.verbose, debug=args.debug)
+                    file_store = FileCertStore(filename, quiet=args.quiet, verbose=args.verbose, debug=args.debug)
                     file_store.set_filter(cn=args.regex, ski=args.ski, aki=args.aki)
                     if args.expires is not None:
                         file_store.enable_check(check_type=FileCertStore.CHECK_EXPIRES, check_param=args.expires)
